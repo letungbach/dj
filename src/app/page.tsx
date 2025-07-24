@@ -39,6 +39,23 @@ const fileToDataUri = (file: File) =>
     reader.readAsDataURL(file);
   });
 
+const formatTime = (seconds: number) => {
+  const mins = Math.floor(seconds / 60);
+  const secs = Math.floor(seconds % 60);
+  const ms = Math.round((seconds - Math.floor(seconds)) * 100);
+  return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}.${String(ms).padStart(2, '0')}`;
+};
+
+const parseTime = (timeStr: string): number => {
+    const parts = timeStr.split(/[:.]/);
+    if (parts.length === 3) {
+      const [mins, secs, ms] = parts.map(Number);
+      return (mins * 60) + secs + (ms / 100);
+    }
+    const numericValue = parseFloat(timeStr);
+    return isNaN(numericValue) ? 0 : numericValue;
+};
+
 export default function DJIntelligencePage() {
   const [file, setFile] = useState<File | null>(null);
   const [results, setResults] = useState<AnalysisResult | null>(null);
@@ -384,9 +401,14 @@ function AnalysisDashboard({
             <div className="space-y-1" key={cue}>
               <Label className="capitalize text-muted-foreground">{cue}</Label>
               <Input
-                type="number"
-                value={results.cues[cue].toFixed(2)}
-                onChange={(e) => onResultChange('cues', cue, parseFloat(e.target.value))}
+                type="text"
+                value={formatTime(results.cues[cue])}
+                onChange={(e) => onResultChange('cues', cue, parseTime(e.target.value))}
+                onBlur={(e) => {
+                  const numericValue = parseTime(e.currentTarget.value);
+                  e.currentTarget.value = formatTime(numericValue);
+                  onResultChange('cues', cue, numericValue);
+                }}
               />
             </div>
           ))}
