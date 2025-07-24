@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useTransition, useCallback, ChangeEvent, DragEvent } from 'react';
+import { useState, useTransition, useCallback, ChangeEvent, DragEvent, useEffect, useRef } from 'react';
 import { analyzeAudio, type AnalysisResult } from './actions';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -10,6 +10,8 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useToast } from '@/hooks/use-toast';
+import { Progress } from '@/components/ui/progress';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import {
   UploadCloud,
   FileAudio,
@@ -61,6 +63,7 @@ export default function DJIntelligencePage() {
   const [results, setResults] = useState<AnalysisResult | null>(null);
   const [editableResults, setEditableResults] = useState<AnalysisResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [duration, setDuration] = useState<number | null>(null);
   const [isPending, startTransition] = useTransition();
   const { toast } = useToast();
 
@@ -71,6 +74,19 @@ export default function DJIntelligencePage() {
         setError(null);
         setResults(null);
         setEditableResults(null);
+        setDuration(null); // Reset duration
+
+        const audio = new Audio();
+        audio.src = URL.createObjectURL(selectedFile);
+        audio.onloadedmetadata = () => {
+          setDuration(audio.duration);
+          URL.revokeObjectURL(audio.src); // Clean up
+        };
+        audio.onerror = () => {
+          setError('Could not read audio duration.');
+          URL.revokeObjectURL(audio.src);
+        }
+
       } else {
         setError('Invalid file type. Please upload a WAV or FLAC file.');
         setFile(null);
@@ -128,6 +144,7 @@ export default function DJIntelligencePage() {
     setResults(null);
     setEditableResults(null);
     setError(null);
+    setDuration(null);
   };
 
   return (
@@ -149,7 +166,7 @@ export default function DJIntelligencePage() {
             {error && !isPending && <ErrorAlert message={error} />}
             {isPending && <AnalysisSkeletons />}
             {editableResults && !isPending && (
-              <AnalysisDashboard results={editableResults} onResultChange={handleResultChange} />
+              <AnalysisDashboard results={editableResults} onResultChange={handleResultChange} duration={duration} />
             )}
           </div>
         )}
@@ -308,6 +325,7 @@ function AnalysisSkeletons() {
 function AnalysisDashboard({
   results,
   onResultChange,
+  duration,
 }: {
   results: AnalysisResult;
   onResultChange: <T extends keyof AnalysisResult, K extends keyof AnalysisResult[T]>(
@@ -315,6 +333,7 @@ function AnalysisDashboard({
     field: K,
     value: any
   ) => void;
+  duration: number | null;
 }) {
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 animate-in fade-in-50 duration-500">
@@ -396,13 +415,84 @@ function AnalysisDashboard({
           </CardTitle>
           <CardDescription>Suggested cue points based on song structure.</CardDescription>
         </CardHeader>
-        <CardContent className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
-          {(Object.keys(results.cues) as Array<keyof typeof results.cues>).map((cue) => (
+        <CardContent>
+          <HotCueTimeline cues={results.cues} duration={duration} onResultChange={onResultChange}/>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+const CUE_COLORS: Record<keyof AnalysisResult['cues'], string> = {
+  intro: 'bg-blue-500',
+  build: 'bg-yellow-500',
+  drop: 'bg-red-500',
+  breakdown: 'bg-purple-500',
+  outro: 'bg-green-500',
+};
+
+function HotCueTimeline({
+  cues,
+  duration,
+  onResultChange,
+}: {
+  cues: AnalysisResult['cues'];
+  duration: number | null;
+  onResultChange: <T extends keyof AnalysisResult, K extends keyof AnalysisResult[T]>(
+    category: T,
+    field: K,
+    value: any
+  ) => void;
+}) {
+  const timelineRef = useRef<HTMLDivElement>(null);
+
+  if (duration === null) {
+    return (
+      <div className="flex items-center justify-center h-24 text-muted-foreground">
+        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+        <p>Loading track duration...</p>
+      </div>
+    );
+  }
+  
+  const sortedCues = (Object.keys(cues) as Array<keyof typeof cues>)
+    .map(key => ({ name: key, time: cues[key] }))
+    .sort((a, b) => a.time - b.time);
+
+  return (
+    <TooltipProvider>
+      <div className="space-y-4">
+        <div ref={timelineRef} className="relative w-full h-10">
+          <Progress value={100} className="h-2 absolute top-1/2 -translate-y-1/2" />
+          {(Object.keys(cues) as Array<keyof typeof cues>).map((cueName) => {
+            const time = cues[cueName];
+            const percentage = (time / duration) * 100;
+            return (
+              <Tooltip key={cueName}>
+                <TooltipTrigger asChild>
+                  <div
+                    className={`absolute w-4 h-4 rounded-full ${CUE_COLORS[cueName]} top-1/2 -translate-y-1/2 -translate-x-1/2 cursor-pointer border-2 border-background`}
+                    style={{ left: `${percentage}%` }}
+                  />
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p className="font-bold capitalize">{cueName}</p>
+                  <p>{formatTime(time)}</p>
+                </TooltipContent>
+              </Tooltip>
+            );
+          })}
+        </div>
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
+          {sortedCues.map(({ name: cue }) => (
             <div className="space-y-1" key={cue}>
-              <Label className="capitalize text-muted-foreground">{cue}</Label>
+              <Label className="capitalize text-muted-foreground flex items-center">
+                <span className={`w-2 h-2 rounded-full mr-2 ${CUE_COLORS[cue]}`}></span>
+                {cue}
+              </Label>
               <Input
                 type="text"
-                value={formatTime(results.cues[cue])}
+                value={formatTime(cues[cue])}
                 onChange={(e) => onResultChange('cues', cue, parseTime(e.target.value))}
                 onBlur={(e) => {
                   const numericValue = parseTime(e.currentTarget.value);
@@ -412,8 +502,8 @@ function AnalysisDashboard({
               />
             </div>
           ))}
-        </CardContent>
-      </Card>
-    </div>
+        </div>
+      </div>
+    </TooltipProvider>
   );
 }
